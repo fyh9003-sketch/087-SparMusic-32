@@ -1,11 +1,8 @@
 
-name: Build 087 Music Player
+name: Build 087 SparMusic APK
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/build.yml"
 
 permissions:
   contents: read
@@ -13,337 +10,110 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout source
+      - name: Checkout MusicFree source
         uses: actions/checkout@v4
+        with:
+          repository: maotoumao/MusicFree
+          ref: master
+          path: upstream
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: upstream/android/**/*.gradle*
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          gradle-version: "8.7"
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: upstream/package-lock.json
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Generate Android project
+      - name: Rename app to 087 SparMusic
+        working-directory: upstream
         shell: bash
         run: |
-          mkdir -p app/src/main/java/com/example/music
-          mkdir -p app/src/main/res/values
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "087MusicPlayer"
-          include(":app")
-          EOF
+          p = Path("android/app/src/main/res/values/strings.xml")
+          if not p.exists():
+              raise SystemExit("找不到 Android 应用名称文件")
 
-          cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.6.1' apply false
-          }
-          EOF
+          s = p.read_text(encoding="utf-8")
+          s, n = re.subn(
+              r'(<string name="app_name"[^>]*>).*?(</string>)',
+              r'\g<1>087 SparMusic\g<2>',
+              s,
+              count=1
+          )
+          if n == 0:
+              raise SystemExit("未找到 app_name，停止构建以避免名称修改失败")
 
-          cat > app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-          }
+          p.write_text(s, encoding="utf-8")
+          print("应用名称已设置为 087 SparMusic")
+          PY
 
-          android {
-              namespace 'com.example.music'
-              compileSdk 35
+      - name: Install dependencies
+        working-directory: upstream
+        run: npm ci --no-audit --no-fund
 
-              defaultConfig {
-                  applicationId 'com.example.music'
-                  minSdk 23
-                  targetSdk 28
-                  versionCode 1
-                  versionName '1.0.0'
-              }
-          }
-          EOF
+      - name: Download Xiaowo and Xiaoqiu plugins
+        shell: bash
+        run: |
+          set -e
+          mkdir -p plugin-pack
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#6750A4</item>
-                  <item name="android:statusBarColor">#201A30</item>
-                  <item name="android:navigationBarColor">#201A30</item>
-              </style>
-          </resources>
-          EOF
+          curl -fL --retry 3 \
+            "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaowo.js" \
+            -o plugin-pack/xiaowo.js
 
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <application
-                  android:theme="@style/AppTheme"
-                  android:label="087 音乐"
-                  android:usesCleartextTraffic="false">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
+          curl -fL --retry 3 \
+            "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaoqiu.js" \
+            -o plugin-pack/xiaoqiu.js
 
-          cat > app/src/main/java/com/example/music/MainActivity.java <<'EOF'
-          package com.example.music;
+          test -s plugin-pack/xiaowo.js
+          test -s plugin-pack/xiaoqiu.js
 
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.graphics.Color;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.widget.*;
-          import android.media.MediaPlayer;
-          import org.json.JSONArray;
-          import org.json.JSONObject;
-          import java.net.URL;
-          import java.net.URLEncoder;
-          import java.net.HttpURLConnection;
-          import java.io.ByteArrayOutputStream;
-          import java.io.InputStream;
-          import java.nio.charset.StandardCharsets;
+          cat > plugin-pack/README.txt <<'EOF'
+          087 SparMusic 音源文件
+          小窝：xiaowo.js
+          小秋：xiaoqiu.js
 
-          public class MainActivity extends Activity {
-              LinearLayout root, results;
-              EditText query;
-              TextView status, nowPlaying;
-              MediaPlayer player;
-              int purple = Color.rgb(103, 80, 164);
-
-              int dp(float n) {
-                  return (int)(n * getResources().getDisplayMetrics().density + 0.5f);
-              }
-
-              TextView label(String text, int size) {
-                  TextView v = new TextView(this);
-                  v.setText(text);
-                  v.setTextSize(size);
-                  v.setTextColor(Color.rgb(35, 32, 45));
-                  return v;
-              }
-
-              @Override
-              public void onCreate(Bundle state) {
-                  super.onCreate(state);
-                  getWindow().setStatusBarColor(Color.rgb(32, 26, 48));
-                  getWindow().setNavigationBarColor(Color.rgb(32, 26, 48));
-
-                  ScrollView scroll = new ScrollView(this);
-                  root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setPadding(dp(20), dp(24), dp(20), dp(24));
-                  root.setBackgroundColor(Color.rgb(248, 246, 252));
-                  scroll.addView(root);
-                  setContentView(scroll);
-
-                  TextView title = label("087 音乐", 30);
-                  title.setTextColor(purple);
-                  root.addView(title);
-
-                  TextView sub = label("在线搜歌 · 试听播放", 15);
-                  sub.setPadding(0, dp(4), 0, dp(20));
-                  root.addView(sub);
-
-                  LinearLayout bar = new LinearLayout(this);
-                  bar.setGravity(Gravity.CENTER_VERTICAL);
-                  query = new EditText(this);
-                  query.setSingleLine(true);
-                  query.setTextSize(16);
-                  query.setHint("输入歌名或歌手");
-                  bar.addView(query, new LinearLayout.LayoutParams(
-                      0, dp(54), 1));
-
-                  Button search = new Button(this);
-                  search.setText("搜索");
-                  search.setOnClickListener(v -> searchSongs());
-                  bar.addView(search);
-                  root.addView(bar);
-
-                  status = label("输入歌曲名称开始搜索。", 14);
-                  status.setPadding(0, dp(16), 0, dp(12));
-                  root.addView(status);
-
-                  nowPlaying = label("尚未播放歌曲", 14);
-                  nowPlaying.setTextColor(purple);
-                  root.addView(nowPlaying);
-
-                  results = new LinearLayout(this);
-                  results.setOrientation(LinearLayout.VERTICAL);
-                  root.addView(results);
-              }
-
-              void searchSongs() {
-                  String q = query.getText().toString().trim();
-                  if (q.isEmpty()) {
-                      status.setText("请先输入歌名或歌手。");
-                      return;
-                  }
-
-                  status.setText("正在搜索，请稍候……");
-                  results.removeAllViews();
-
-                  new Thread(() -> {
-                      HttpURLConnection c = null;
-                      try {
-                          String encoded = URLEncoder.encode(
-                              q, StandardCharsets.UTF_8.name());
-                          URL url = new URL(
-                              "https://itunes.apple.com/search?term="
-                              + encoded + "&entity=song&limit=25");
-                          c = (HttpURLConnection) url.openConnection();
-                          c.setConnectTimeout(15000);
-                          c.setReadTimeout(15000);
-                          c.setRequestMethod("GET");
-
-                          InputStream in = c.getInputStream();
-                          ByteArrayOutputStream out =
-                              new ByteArrayOutputStream();
-                          byte[] buf = new byte[4096];
-                          int n;
-                          while ((n = in.read(buf)) != -1) {
-                              out.write(buf, 0, n);
-                          }
-                          in.close();
-
-                          JSONObject data = new JSONObject(
-                              out.toString("UTF-8"));
-                          JSONArray tracks = data.getJSONArray("results");
-
-                          runOnUiThread(() -> {
-                              results.removeAllViews();
-                              if (tracks.length() == 0) {
-                                  status.setText("没有找到歌曲，请换个关键词。");
-                                  return;
-                              }
-                              status.setText("找到 "
-                                  + tracks.length() + " 首歌曲（试听列表）");
-                              for (int i = 0; i < tracks.length(); i++) {
-                                  JSONObject item = tracks.optJSONObject(i);
-                                  if (item == null) continue;
-                                  String name = item.optString(
-                                      "trackName", "未知歌曲");
-                                  String artist = item.optString(
-                                      "artistName", "未知歌手");
-                                  String preview = item.optString(
-                                      "previewUrl", "");
-                                  addTrack(name, artist, preview);
-                              }
-                          });
-                      } catch (Exception e) {
-                          runOnUiThread(() -> status.setText(
-                              "搜索失败，请检查网络后重试。"));
-                      } finally {
-                          if (c != null) c.disconnect();
-                      }
-                  }).start();
-              }
-
-              void addTrack(String name, String artist, String preview) {
-                  LinearLayout card = new LinearLayout(this);
-                  card.setOrientation(LinearLayout.VERTICAL);
-                  card.setPadding(dp(14), dp(12), dp(14), dp(12));
-                  card.setBackgroundColor(Color.WHITE);
-
-                  LinearLayout.LayoutParams cp =
-                      new LinearLayout.LayoutParams(-1, -2);
-                  cp.setMargins(0, dp(5), 0, dp(5));
-                  results.addView(card, cp);
-
-                  TextView song = label(name, 17);
-                  song.setTypeface(null, 1);
-                  card.addView(song);
-
-                  TextView singer = label(artist, 14);
-                  singer.setPadding(0, dp(4), 0, dp(8));
-                  card.addView(singer);
-
-                  Button play = new Button(this);
-                  play.setText(preview.isEmpty()
-                      ? "暂无试听" : "播放试听");
-                  play.setEnabled(!preview.isEmpty());
-                  play.setOnClickListener(v -> playPreview(
-                      name, artist, preview));
-                  card.addView(play);
-              }
-
-              void playPreview(String name, String artist, String url) {
-                  nowPlaying.setText("正在加载：" + name);
-                  new Thread(() -> {
-                      try {
-                          MediaPlayer mp = new MediaPlayer();
-                          mp.setDataSource(url);
-                          mp.setOnPreparedListener(p -> runOnUiThread(() -> {
-                              if (player != null) {
-                                  player.release();
-                              }
-                              player = p;
-                              p.start();
-                              nowPlaying.setText("正在播放：" + name
-                                  + " - " + artist);
-                          }));
-                          mp.setOnErrorListener((p, what, extra) -> {
-                              runOnUiThread(() -> nowPlaying.setText(
-                                  "播放失败，请尝试其他歌曲。"));
-                              p.release();
-                              return true;
-                          });
-                          mp.prepareAsync();
-                      } catch (Exception e) {
-                          runOnUiThread(() -> nowPlaying.setText(
-                              "无法播放该试听，请换一首歌曲。"));
-                      }
-                  }).start();
-              }
-
-              @Override
-              protected void onDestroy() {
-                  if (player != null) {
-                      player.release();
-                      player = null;
-                  }
-                  super.onDestroy();
-              }
-          }
+          请在 MusicFree 的插件管理页面导入对应 JS 文件。
+          插件能否使用取决于音源服务是否可访问。
           EOF
 
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+        working-directory: upstream/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          test -s upstream/android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh upstream/android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: 087-music-player-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: 087-SparMusic-APK
+          path: upstream/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
+      - name: Upload Xiaowo and Xiaoqiu plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: 087-SparMusic-Plugins
+          path: plugin-pack/
+          if-no-files-found: error
+          retention-days: 14
