@@ -1,0 +1,135 @@
+
+name: Build 087 SparMusic APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout MusicFree
+        uses: actions/checkout@v4
+        with:
+          repository: maotoumao/MusicFree
+          ref: master
+          path: upstream
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Rename app
+        working-directory: upstream
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          p = Path("app.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          data["displayName"] = "087 SparMusic"
+          p.write_text(
+              json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8"
+          )
+
+          p = Path("android/app/src/main/res/values/strings.xml")
+          s = p.read_text(encoding="utf-8")
+          s, n = re.subn(
+              r'(<string name="app_name">).*?(</string>)',
+              r'\g<1>087 SparMusic\g<2>',
+              s,
+              count=1
+          )
+          if n:
+              p.write_text(s, encoding="utf-8")
+
+          print("087 SparMusic branding configured.")
+          PY
+
+      - name: Download Xiaowo and Xiaoqiu plugins
+        run: |
+          mkdir -p plugin-pack
+          curl -fL --retry 3 \
+            "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaowo.js" \
+            -o plugin-pack/xiaowo.js
+          curl -fL --retry 3 \
+            "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaoqiu.js" \
+            -o plugin-pack/xiaoqiu.js
+          test -s plugin-pack/xiaowo.js
+          test -s plugin-pack/xiaoqiu.js
+
+      - name: Create plugin subscription
+        run: |
+          cat > plugin-pack/087-SparMusic-plugins.json <<'JSON'
+          {
+            "desc": "087 SparMusic 音源订阅：小窝、小秋",
+            "plugins": [
+              {
+                "name": "小窝",
+                "url": "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaowo.js",
+                "version": "1.0.0"
+              },
+              {
+                "name": "小秋",
+                "url": "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/xiaoqiu.js",
+                "version": "1.0.0"
+              }
+            ]
+          }
+          JSON
+
+      - name: Install dependencies
+        working-directory: upstream
+        run: npm ci --no-audit --no-fund
+
+      - name: Build APK
+        working-directory: upstream/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 087-SparMusic-debug-apk
+          path: upstream/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: 087-SparMusic-plugins
+          path: plugin-pack/
+          if-no-files-found: error
+
+      - name: Package source
+        if: success()
+        run: |
+          cd upstream
+          zip -r ../087-SparMusic-full-source.zip . \
+            -x ".git/*" \
+            -x "node_modules/*" \
+            -x "android/.gradle/*" \
+            -x "android/app/build/*"
+
+      - name: Upload full source
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 087-SparMusic-full-source
+          path: 087-SparMusic-full-source.zip
+          if-no-files-found: error
